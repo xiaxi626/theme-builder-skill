@@ -206,6 +206,32 @@ Gridea Pro 支持 LESS 预处理。如果使用 `.less` 文件：
 
 ---
 
+## 本机调试与配置缓存
+
+### Gridea Pro 数据目录（macOS）
+
+| 路径 | 内容 |
+|------|------|
+| `~/Documents/Gridea Pro/themes/` | 已安装主题（把开发中的主题目录复制到这里即可安装） |
+| `~/Documents/Gridea Pro/output/` | 最近一次渲染的静态站点输出 |
+| `~/Documents/Gridea Pro/config/config.json` | 站点配置；`themeName` 字段是当前主题，`customConfig` 字段是用户已保存的主题配置值 |
+
+### ⚠️ 主题 config.json 有进程级缓存
+
+Gridea Pro 按主题名缓存 config.json 的 schema（`theme_config_service` 的内存 cache，**没有失效接口**）。含义：
+
+- 主题安装后**再修改 customConfig 声明或默认值**，渲染仍用旧 schema——必须**重启 Gridea Pro 应用**才生效
+- 开发期热验证绕法：把主题目录复制成一个新名字（缓存按 themeName 为 key，新名字必然重新读取），验证完删除副本
+- 模板文件（templates/、assets/）**没有**这个问题，每次渲染都读最新内容
+
+### 渲染失败的识别与内容级验证
+
+- 某个模板渲染抛错时，引擎会写入**降级视图**兜底页：页面顶部有黄色横幅（HTML 中可 grep `fallback-banner`）。验证命令：`grep -rl fallback-banner output/ --include="*.html"`，命中即有模板报错
+- **渲染成功 ≠ 内容正确**：Pongo2 对未定义变量、错误的键大小写（如 `group.year` vs `group.Year`）、`not x == y` 这类表达式都**静默输出空**。发布前务必抽查输出 HTML：列表是否非空、条件块是否按预期出现
+- 主题默认配置与用户配置的合并：渲染时 `theme_config` = 主题 config.json 默认值 + 用户已保存值（用户优先）。模板仍应对关键项做 `|default:` 兜底，防御用户配置残缺的场景
+
+---
+
 ## 模板文件命名规范
 
 ### 页面模板

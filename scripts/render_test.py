@@ -181,6 +181,17 @@ def pongo2_to_jinja2(content):
 # Build Jinja2 context from mock data
 # ---------------------------------------------------------------------------
 
+def _parse_now(raw):
+    """now 在真实引擎中是 time.Time；mock 中把 ISO 字符串转成 datetime 以保持同构。"""
+    import datetime as _dt
+    if isinstance(raw, str):
+        try:
+            return _dt.datetime.fromisoformat(raw)
+        except ValueError:
+            return _dt.datetime(2026, 2, 28, 15, 30)
+    return raw
+
+
 def build_context(mock_data, template_name):
     """
     Build the appropriate template context based on template name.
@@ -205,7 +216,7 @@ def build_context(mock_data, template_name):
         "memos": mock_data.get("memos", []),
         "links": links_data,
         "pagination": mock_data.get("pagination", {"prev": "", "next": ""}),
-        "now": mock_data.get("now", "2026-02-28T15:30:00+08:00"),
+        "now": _parse_now(mock_data.get("now", "2026-02-28T15:30:00+08:00")),
     }
 
     # Template-specific context
@@ -229,7 +240,7 @@ def build_context(mock_data, template_name):
 
     elif basename == "tag":
         ctx["current_tag"] = mock_data.get("current_tag", mock_data.get("tag", {
-            "name": "测试", "link": "/tag/test/", "count": 1,
+            "name": "测试", "slug": "test", "link": "/tag/test/", "count": 1,
         }))
         ctx["tag"] = ctx["current_tag"]
         # Filter posts to those with this tag
@@ -239,10 +250,37 @@ def build_context(mock_data, template_name):
             if any(t.get("name") == tag_name for t in p.get("tags", []))
         ]
 
+    elif basename == "category":
+        # 复刻 Gridea Pro 真实运行时：渲染 category.html 时 `category` 是当前分类
+        # （CategoryView { Name, Slug, Link, Count }），`posts` 是该分类下的文章；
+        # 全局 `categories` 数组在引擎里**不存在**，所以这里也不注入。
+        ctx["category"] = mock_data.get("category", {
+            "name": "示例分类", "slug": "sample", "link": "/category/sample/", "count": 1,
+        })
+        cat_name = ctx["category"].get("name", "")
+        ctx["posts"] = [
+            p for p in ctx["posts"]
+            if any(c.get("name") == cat_name for c in p.get("categories", []))
+        ] or ctx["posts"]  # 兜底：mock 里没文章带这个分类时不让模板崩
+
     elif basename in ("archives", "blog", "index"):
         # Filter out hidden posts for list pages
         if basename != "archives":
             ctx["posts"] = [p for p in ctx["posts"] if not p.get("hideInList")]
+        else:
+            # 按年份分组注入 archives —— 键为大写 Year / Posts，
+            # 对齐真实引擎（ArchiveYearView 无 json tag，JSON 化后保留 Go 字段名）
+            groups, order = {}, []
+            for p_item in ctx["posts"]:
+                y = str(p_item.get("date", ""))[:4] or "0000"
+                if y not in groups:
+                    groups[y] = []
+                    order.append(y)
+                groups[y].append(p_item)
+            ctx["archives"] = [
+                {"Year": int(y) if y.isdigit() else y, "Posts": groups[y]}
+                for y in sorted(order, reverse=True)
+            ]
 
     elif basename == "about":
         pass  # config is enough
@@ -307,7 +345,24 @@ def render_jinja2(theme_dir, templates, mock_data, output_dir):
         except AttributeError:
             Markup = str  # Fallback: treat as plain string
 
-    env.filters["date"] = lambda value, fmt="": str(value)
+    def _strict_date(value, fmt=""):
+        # 模拟 Pongo2 行为：date filter 只接受 time.Time。
+        # Jinja2 渲染上下文中 post.date / updatedAt / createdAt 均为 RFC3339 字符串，
+        # 对它们用 |date: 在真实引擎中会报错并使整页降级 —— mock 同样在此报错以提前暴露。
+        import datetime as _dt
+        if isinstance(value, (_dt.datetime, _dt.date)):
+            # Go layout → strftime 的最小映射（覆盖常用场景）
+            f = fmt or "2006-01-02"
+            for go, py in (("2006", "%Y"), ("01", "%m"), ("02", "%d"),
+                           ("15", "%H"), ("04", "%M"), ("05", "%S")):
+                f = f.replace(go, py)
+            return value.strftime(f)
+        raise jinja2.exceptions.TemplateRuntimeError(
+            "date filter 只接受 time.Time（如全局变量 now）。post.date / updatedAt / createdAt "
+            "在 Jinja2 上下文中是 RFC3339 字符串 —— 展示请用 post.dateFormat 或 |relative，"
+            "datetime 属性直接输出 {{ post.date }}"
+        )
+    env.filters["date"] = _strict_date
     env.filters["default"] = lambda value, default_val="": value if value else default_val
     env.filters["safe"] = lambda value: Markup(value) if value else ""
     env.filters["length"] = lambda value: len(value) if value else 0
@@ -359,6 +414,12 @@ def render_jinja2(theme_dir, templates, mock_data, output_dir):
     env.filters["timeago"] = _stub_relative
     env.filters["to_json"] = _stub_to_json
     env.filters["group_by"] = _stub_group_by
+    def _stub_to_int(value):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+    env.filters["to_int"] = _stub_to_int
     env.filters["striptags"] = _stub_strip_html
     env.filters["urlencode"] = lambda v: str(v or "")
     env.filters["truncatechars"] = lambda v, n="140": str(v or "")[:int(str(n) or "140")]
