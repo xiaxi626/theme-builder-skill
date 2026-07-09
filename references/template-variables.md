@@ -40,7 +40,7 @@
 | `tags` | []Tag | 所有标签列表 |
 | `category` | Category | **当前分类对象**（仅在 `category.html` 渲染时被引擎赋值；其他页面里访问会得到空对象） |
 | `current_tag` / `tag` / `currentTag` | Tag | **当前标签对象**（三个名字是同一个数据的别名，仅在 `tag.html` 渲染时有效） |
-| `archives` | []ArchiveYear | 按年份分组的归档数据。结构 `{ year: int, posts: []Post }`，仅 `archives.html` 使用 |
+| `archives` | []ArchiveYear | 按年份分组的归档数据。**分组键是大写的 `Year` / `Posts`**（引擎 `ArchiveYearView` 没加 json tag），Jinja2 中必须写 `{% for group in archives %}{{ group.Year }}{% for post in group.Posts %}...`；写小写 `group.year` / `group.posts` 会**静默取到空值**（不报错、循环体不输出）。仅 `archives.html` 使用 |
 | `links` | []Link | 友链列表（详见 [Link 对象](#link-对象)） |
 | `commentSetting` | Object | 评论平台配置（`platform` / `appId` / `serverURLs` 等，由 Gridea Pro 全局评论设置注入） |
 | `now` | time.Time | 当前时间（Go 的 `time.Time` 对象，可使用 `|date` 过滤器格式化） |
@@ -66,10 +66,10 @@
 | `post.abstract` | template.HTML | 摘要 HTML（来自正文 `<!-- more -->` 之前的内容，无则为空）。同样需要 `\|safe` 输出 |
 | `post.description` | string | 文章描述纯文本（无 HTML），适合用作 meta description |
 | `post.toc` | template.HTML | 自动生成的目录 HTML（基于正文 h2/h3）。需要 `\|safe` 输出，无目录时为空字符串 |
-| `post.date` | time.Time | 发布日期，**是 Go 的 `time.Time` 对象**（不是字符串）。可用 `\|date:"2006-01-02"` 过滤器格式化；展示时建议直接用 `post.dateFormat` |
+| `post.date` | 引擎相关（见下） | 发布日期。**Jinja2 / EJS 中是 RFC3339 字符串**（如 `"2026-04-06T10:00:00+08:00"`，模板上下文经 JSON 序列化）；仅 Go Templates 中是 `time.Time`。**Jinja2 中对它用 `\|date:` 过滤器会直接报错、整页降级**；展示用 `post.dateFormat`，相对时间用 `post.date\|relative`，`datetime` 属性 / JSON-LD 直接输出 `{{ post.date }}`（RFC3339 本身合法） |
 | `post.dateFormat` | string | 已经按站点 `DateFormat` 格式化好的日期显示字符串，**展示日期首选这个** |
-| `post.createdAt` | time.Time | 创建时间（与 `post.date` 同源） |
-| `post.updatedAt` | time.Time | 最后修改时间 |
+| `post.createdAt` | 引擎相关 | 创建时间（与 `post.date` 同源、同类型规则） |
+| `post.updatedAt` | 引擎相关 | 最后修改时间（同 `post.date` 类型规则） |
 | `post.updatedAtFormat` | string | 格式化后的修改时间显示字符串 |
 | `post.link` | string | 文章 URL 路径（相对路径） |
 | `post.tags` | []Tag | 文章的标签列表 |
@@ -87,7 +87,7 @@
 ### 关键注意事项
 
 - **`post.content` 是 HTML**：已经由 Markdown 渲染为 HTML，在 Jinja2 中必须使用 `{{ post.content|safe }}` 输出，在 Go Templates 中使用 `{{ .Post.Content }}`（默认不转义），在 EJS 中使用 `<%- post.content %>`（注意是 `<%-` 不是 `<%=`）
-- **`post.date` 是 `time.Time`，不是字符串**：以前的文档说反了。展示直接用 `{{ post.dateFormat }}` 最省事；要换格式就 `{{ post.date|date:"2006-01-02" }}`（Go time 风格的 layout）
+- **`post.date` 的类型取决于引擎**（这一点历史上反复写错，以本条为准，依据 `backend/internal/render/*_renderer.go`）：Jinja2 与 EJS 的渲染上下文经 `json.Marshal` 转换，`time.Time` 序列化为 **RFC3339 字符串**；Go Templates 直接传 struct，`.Post.Date` 才是 `time.Time`。因此 **Jinja2 中 `{{ post.date|date:"2006-01-02" }}` 会抛 "filter input argument must be of type 'time.Time'"，整页进入降级视图**。正确做法：展示用 `{{ post.dateFormat }}`，相对时间用 `{{ post.date|relative }}`（该 filter 对 RFC3339 字符串健壮），`<time datetime>` 属性和 JSON-LD 的 `datePublished` 直接输出 `{{ post.date }}`。只有全局变量 `now` 是真 `time.Time`，`{{ now|date:"2006" }}` 合法
 - **`post.feature` 可能为空**：展示特色图片前必须判断是否为空字符串
 - **`post.prevPost` / `post.nextPost` 可能为 `null`**：第一篇/最后一篇会缺一个方向；模板中务必先判空再用
 - **`post.prevPost` 的方向语义反直觉**：在 Hexo / Hugo 习惯里 prev = 更早，但 Gridea Pro 的 `prevPost` 实际是数组前一项（即更新的一篇）。如果是从其他生态移植主题，**别照搬"上一篇 = 更早"的标签**，要么按 Gridea 实际方向写，要么交换 prevPost / nextPost 的位置
@@ -291,7 +291,7 @@
 | `index.html` | `posts`, `pagination` | 首页（自动分页生成 `/page/2/`、`/page/3/` …） |
 | `blog.html` | `posts`, `pagination` | 博客列表页 |
 | `post.html` | `post` | 文章详情页（每篇文章一个），`post.prevPost` / `post.nextPost` 由引擎自动注入 |
-| `archives.html` | `posts`, `archives`, `pagination` | 归档页（`archives` 是按年份分组的 `[]ArchiveYear`） |
+| `archives.html` | `posts`, `archives`, `pagination` | 归档页（`archives` 是按年份分组的 `[]ArchiveYear`，**分组键为大写 `Year` / `Posts`**） |
 | `tag.html` | `posts`, `tag`, `current_tag`, `currentTag`, `pagination` | **每个标签**一份，渲染到 `/tag/<slug>/`；`tag` 是当前标签对象 |
 | `tags.html` | （仅全局变量） | 全站标签索引页（用 `tags` 全局列表渲染） |
 | `category.html` | `posts`, `category`, `pagination` | **每个分类**一份，渲染到 `/category/<slug>/`；`category` 是当前分类对象 |
@@ -581,11 +581,19 @@ fetch('/api/search.json')
 {# now 是 time.Time，可用 date 过滤器 #}
 {{ now|date:"2006-01-02" }}
 
-{# post.date 也是 time.Time，但展示首选 post.dateFormat（已按站点配置格式化好） #}
+{# ⚠️ post.date 在 Jinja2 上下文中是 RFC3339 字符串，禁止再接 |date: 过滤器（会报错整页降级） #}
+{# 展示首选 post.dateFormat（已按站点配置格式化好） #}
 {{ post.dateFormat }}
 
-{# 想换格式时再用 |date 过滤器 #}
-{{ post.date|date:"2006年01月02日" }}
+{# 相对时间（"3 天前"），relative 对 RFC3339 字符串健壮 #}
+{{ post.date|relative }}
+
+{# datetime 属性 / JSON-LD 直接输出原始字符串即可 #}
+<time datetime="{{ post.date }}">{{ post.dateFormat }}</time>
+
+{# 想截取年份 / 月-日：用 slice 过滤器（字符串切片） #}
+{{ post.date|slice:":4" }}   {# "2026" #}
+{{ post.date|slice:"5:10" }} {# "04-06" #}
 ```
 
 ```go
@@ -646,7 +654,9 @@ fetch('/api/search.json')
 | `post.image` | `post.feature` | 特色图片字段名为 `feature` |
 | `post.pinned` | `post.isTop` | 置顶字段名为 `isTop` |
 | `post.toc_html` / `post.tableOfContents` | `post.toc` | 目录字段名简写为 `toc`，需 `\|safe` |
-| `{{ post.date }}` 直接展示日期 | `{{ post.dateFormat }}` 或 `{{ post.date\|date:"layout" }}` | `post.date` 是 `time.Time` 不是字符串，直接输出会得到 Go 时间默认格式（不能用） |
+| `{{ post.date\|date:"2006-01-02" }}` | `{{ post.dateFormat }}` / `{{ post.date\|relative }}` / `{{ post.date\|slice:":10" }}` | Jinja2 中 `post.date` 是 RFC3339 字符串，`\|date:` 过滤器要求 time.Time，**用错直接报错整页降级** |
+| `{% for g in archives %}{{ g.year }} … {{ g.posts }}` | `{{ g.Year }}` / `{{ g.Posts }}` | archives 分组键是大写（struct 无 json tag），小写静默取空 |
+| `{% if not x == y %}` | `{% if x != y %}` | Pongo2 中解析为 `(not x) == y`，恒 false 且不报错 |
 | `post.readingTime` | `post.stats.text` 或 `post.stats.minutes` | 阅读时长在 `post.stats` 子对象里 |
 | `post.next` / `post.prev` | `post.nextPost` / `post.prevPost` | 字段名带 `Post` 后缀，且**注意 prev / next 的方向语义与 Hexo 相反**（见 [SimplePostView](#simplepostview-对象prevpost--nextpost)） |
 | `categories`（全局变量） | 没有这个全局，`category.html` 里只有 `category`（当前分类） + `posts` | 引擎不暴露"所有分类"列表；要分类总览需自己从 `posts[].categories` 聚合 |

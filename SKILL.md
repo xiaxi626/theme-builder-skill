@@ -12,7 +12,7 @@ description: >
 
 ## 工作流程
 
-按以下 5 步执行主题开发任务：
+按以下 6 步执行主题开发任务：
 
 ### 第 1 步：确定模板引擎
 
@@ -33,6 +33,16 @@ description: >
 ### 第 5 步：渲染测试
 
 运行 `scripts/render_test.py` 使用 mock 数据渲染全部页面，检查渲染错误和残留模板标签。
+
+### 第 6 步：真实引擎验证（强烈推荐）
+
+mock 测试用 Python Jinja2 模拟 Pongo2，**测不出运算符优先级差异，也不检查输出内容**（渲染成功 ≠ 内容正确：`not x == y` 恒 false、`group.year` 小写取空这类错误都是静默的）。若本机装有 Gridea Pro（数据目录 `~/Documents/Gridea Pro/`）：
+
+1. 把主题复制到 `~/Documents/Gridea Pro/themes/<name>/`，切换站点主题并渲染（可用 gridea-pro MCP 的 `render_site`）
+2. 检查 `output/` 内**无** `fallback-banner`（黄色降级视图 = 某模板渲染抛错）
+3. 抽查关键页面输出：列表非空、循环体有内容、条件块按预期出现
+
+注意：Gridea Pro 对主题 config.json 有**进程级缓存**——安装后再修改 customConfig 声明，必须重启应用才生效（开发期绕法：把主题目录复制成新名字）。
 
 ## 引擎选择表
 
@@ -138,23 +148,28 @@ python scripts/render_test.py ./themes/my-blog --output-dir ./preview
 ### Jinja2 (Pongo2) 专属规则
 
 5. **过滤器参数用冒号不用括号**——正确：`{{ value|default:"fallback" }}`，错误：`{{ value|default("fallback") }}`
-6. **post.date 是字符串不是时间对象**——`post.date` 已经是格式化后的字符串，不要对其使用 `|date` 过滤器
+6. **post.date 是 RFC3339 字符串，禁用 `|date:` 过滤器**——Jinja2 上下文经 JSON 序列化，`post.date` / `updatedAt` / `createdAt` 都是字符串，接 `|date:` 会报错**整页降级**。展示用 `post.dateFormat`，相对时间用 `|relative`，`datetime` 属性直接输出；只有 `now` 是真 time.Time 可用 `|date:`
 7. **include 路径始终相对于 templates/ 根目录**——正确：`{% include "partials/header.html" %}`，不是相对于当前文件路径
 8. **输出 HTML 内容必须用 safe 过滤器**——`{{ post.content|safe }}`，否则 HTML 会被转义
+9. **不等判断必须用 `!=`**——`{% if not x == y %}` 会被解析为 `{% if (not x) == y %}`，恒 false 且**不报错**（症状：整个 if 块凭空消失）
+10. **archives 分组键是大写**——`{{ group.Year }}` / `{% for post in group.Posts %}`，小写静默取空
+11. **theme_config 数字比较先 `|to_int`**——GUI 保存的数字可能是字符串，`{% if loop.index <= theme_config.count|default:8|to_int %}`
 
 ### Go Templates 专属规则
 
-9. **访问嵌套字段前必须判空**——`{{ if .Post }}{{ .Post.Title }}{{ end }}`，否则 nil 时会 panic
-10. **变量名必须 PascalCase**——`.Config.SiteName` 不是 `.config.siteName`，大小写错误会输出空值或 `<no value>`
-11. **CustomConfig 是 map 类型，必须用 index 访问**——`{{ index .Site.CustomConfig "showSearch" }}`，不能用点号 `.Site.CustomConfig.showSearch`
-12. **CustomConfig 中的 HTML/CSS 内容必须用 safeHTML/safeCSS**——否则被自动转义为纯文本
-13. **template 调用末尾必须带 `.` 传递上下文**——`{{ template "header" . }}`，漏掉 `.` 会导致组件内所有变量为 nil
-14. **没有模板继承**——不支持 extends/block，每个页面写完整骨架 + template 组件组装
+12. **访问嵌套字段前必须判空**——`{{ if .Post }}{{ .Post.Title }}{{ end }}`，否则 nil 时会 panic
+13. **变量名必须 PascalCase**——`.Config.SiteName` 不是 `.config.siteName`，大小写错误会输出空值或 `<no value>`
+14. **CustomConfig 是 map 类型，必须用 index 访问**——`{{ index .Site.CustomConfig "showSearch" }}`，不能用点号 `.Site.CustomConfig.showSearch`
+15. **CustomConfig 中的 HTML/CSS 内容必须用 safeHTML/safeCSS**——否则被自动转义为纯文本
+16. **template 调用末尾必须带 `.` 传递上下文**——`{{ template "header" . }}`，漏掉 `.` 会导致组件内所有变量为 nil
+17. **没有模板继承**——不支持 extends/block，每个页面写完整骨架 + template 组件组装
 
 ### EJS 专属规则
 
-15. **禁止使用 require()**——EJS 运行时不支持 Node.js 的 `require()`，JS 能力有限
+18. **禁止使用 require()**——EJS 运行时不支持 Node.js 的 `require()`，JS 能力有限
 
-### 静态资源规则
+### 静态资源与配置规则
 
-16. **assets/ 前缀会被去除**——`assets/styles/main.css` 在输出中变为 `/styles/main.css`，模板中引用时不加 `assets/` 前缀
+19. **assets/ 前缀会被去除**——`assets/styles/main.css` 在输出中变为 `/styles/main.css`，模板中引用时不加 `assets/` 前缀
+20. **customConfig 的 type 只能用 GUI 支持的 5 种**——`input` / `textarea` / `select` / `toggle` / `picture-upload`；`number`、`color`、`boolean`、`code` 写了不报错但 GUI 渲染空白控件（详见 `references/theme-config-schema.md`）
+21. **主题 config.json 有进程级缓存**——修改 customConfig 声明后必须重启 Gridea Pro 应用才生效

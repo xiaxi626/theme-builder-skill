@@ -193,6 +193,20 @@ def _validate_jinja2(filepath, content, theme_dir):
                 "Pongo2 不支持行内三元表达式 'x if cond else y'"
             ))
 
+        # ERROR: 'not x == y' precedence trap — parsed as (not x) == y, always false, silent
+        if re.search(r"\bnot\s+[\w.\[\]'\"]+\s*==", inner):
+            issues.append(Issue(
+                ERROR, rel, line_no,
+                "Pongo2 中 'not x == y' 会解析为 '(not x) == y'，恒为 false 且不报错（if 块静默消失）；不等判断请用 'x != y'"
+            ))
+
+        # ERROR: date filter on JSON-string date fields (post.date/updatedAt/createdAt)
+        if re.search(r"\.(date|createdAt|updatedAt)\s*\|\s*date\b", inner):
+            issues.append(Issue(
+                ERROR, rel, line_no,
+                "post.date / updatedAt / createdAt 在 Jinja2 上下文中是 RFC3339 字符串，接 |date: 会报错整页降级；展示用 post.dateFormat 或 |relative，datetime 属性直接输出"
+            ))
+
         # ERROR: && or || operators
         if re.search(r"&&|\|\|", inner):
             issues.append(Issue(
@@ -478,6 +492,22 @@ def _validate_cross_engine(theme_dir, engine):
             ERROR, "config.json", None,
             f"config.json 中 engine 值无效: '{config['engine']}'，应为 jinja2/go/ejs"
         ))
+
+    # --- customConfig type 白名单（GUI 只渲染这 5 种，其他类型控件空白无法配置） ---
+    VALID_CONFIG_TYPES = {"input", "textarea", "select", "toggle", "picture-upload"}
+    TYPE_SUGGESTIONS = {
+        "boolean": "toggle", "image": "picture-upload", "color": "input（note 注明 HEX）",
+        "code": "textarea", "number": "select 或 input（模板中 |default:N|to_int）",
+        "array": "多个 input 或 textarea 每行一条", "switch": "toggle", "radio": "select",
+    }
+    for item in config.get("customConfig", []) or []:
+        item_type = item.get("type", "")
+        if item_type and item_type not in VALID_CONFIG_TYPES:
+            hint = TYPE_SUGGESTIONS.get(item_type, "input/textarea/select/toggle/picture-upload 之一")
+            issues.append(Issue(
+                ERROR, "config.json", None,
+                f"customConfig '{item.get('name', '?')}' 的 type '{item_type}' GUI 不支持（面板控件空白），请改用 {hint}"
+            ))
 
     # --- Required templates ---
     templates_dir = os.path.join(theme_dir, "templates")

@@ -6,9 +6,26 @@
 
 ### Fixed / Changed
 
+**2026-07-08 · 基于 chatgpt 主题实战（真实引擎渲染）的修正与增强**
+
+- **修正 `post.date` 类型描述（推翻上一轮"修正"）**：Jinja2 / EJS 渲染上下文经 `json.Marshal` 构建，`post.date` / `updatedAt` / `createdAt` 是 **RFC3339 字符串**；仅 Go Templates 直接传 struct 才是 `time.Time`。Jinja2 中对这些字段用 `|date:` 会报错并使整页降级（实战中曾导致首页 + 全部文章页降级）。`template-variables.md` / `jinja2-guide.md`（差异 8 重写）/ `SKILL.md` 规则 6 三处对齐，并给出正确用法：`dateFormat` / `|relative` / 直接输出 / `|slice`。
+- **`archives` 分组键为大写 `Year` / `Posts`**（引擎 `ArchiveYearView` 无 json tag）：小写取值静默为空。`template-variables.md` 全局变量表 / 页面表 / 易错表更新。
+- **新增 Pongo2 致命差异 13、14**（`jinja2-guide.md` 12 → 14 个）：
+  - 13：`not x == y` 解析为 `(not x) == y`，恒 false 且不报错（if 块静默消失），不等判断必须用 `!=`；
+  - 14：`loop.*` 由引擎 loader 自动映射到 `forloop.*`（两种写法都可用），但 `loop.length` 无映射不可用。
+- **`theme-config-schema.md` 类型表重写**：GUI 实际只渲染 `input` / `textarea` / `select` / `toggle` / `picture-upload` 5 种；删除误列的 `number` / `color` / `boolean` / `code` / `image` / `array`，新增「无效类型 → 替代方案」对照表与数字配置完整模式（select + `|default:N|to_int`）。
+- **`jinja2-guide.md` 自定义 filter 表补 `to_int`**：theme_config 数字经 GUI 保存后可能是字符串，与整数比较前必须转型。
+- **`theme-architecture.md` 新增《本机调试与配置缓存》**：Gridea Pro 数据目录（`~/Documents/Gridea Pro/`）、主题 config.json 进程级缓存（改 customConfig 声明须重启应用，开发期可复制新目录名绕过）、降级视图识别（grep `fallback-banner`）、"渲染成功 ≠ 内容正确"的内容级验证要求。
+- **`SKILL.md`**：工作流 5 步 → 6 步（新增第 6 步真实引擎验证）；关键规则 16 → 21 条（新增 `!=`、archives 大写键、`to_int`、customConfig 类型白名单、config.json 缓存）。
+- **`scripts/validate_syntax.py` 新增 3 项静态检查**：`not x == y` 优先级陷阱（ERROR）、日期字段接 `|date:`（ERROR）、customConfig type 白名单（ERROR，附替代建议）。
+- **`scripts/render_test.py` mock 精度提升**：`date` filter 严格化（字符串输入直接报错，模拟 Pongo2 真实行为——此前静默通过，测不出整页降级级错误）；`now` 注入 `datetime` 对象（对齐 time.Time，支持 Go layout 常用格式）；归档页注入大写 `Year` / `Posts` 分组数据；补 `to_int` filter 桩。
+- **`assets/mock-data*.json`**：文章 `date` / `createdAt` / `updatedAt` 升级为 RFC3339 完整格式（对齐真实上下文，使 `|slice:"5:10"` 等字符串操作语义正确）。
+- 回归验证：chatgpt 主题 12/12 通过；存量主题（flavor-theme / simplecho / writecho / muse / amore-jinja2）结果与改动前基线完全一致（零误伤）；注入 3 类真实坑的坏样本全部被新检查拦截。
+
+
 - `references/template-variables.md`：补齐与 Gridea Pro 真实运行时之间的多处差距：
   - **Post 对象**：补 `id` / `abstract` / `description` / `toc` / `categories` / `tagsString` / `stats` / `prevPost` / `nextPost` / `createdAt` / `updatedAt` / `updatedAtFormat` / `published`；
-  - **修正旧文档错误**：`post.date` 实际是 `time.Time`（不是字符串），展示日期首选 `post.dateFormat`；
+  - **修正旧文档错误**：`post.date` 实际是 `time.Time`（不是字符串），展示日期首选 `post.dateFormat`；*（勘误：此条已于 2026-07-08 推翻——Jinja2/EJS 上下文经 JSON 序列化，`post.date` 是 RFC3339 字符串，仅 Go Templates 中是 time.Time，见上方条目）*；
   - **新增对象章节**：`Category` / `PostStats` / `SimplePostView`（prevPost / nextPost 的元素类型）；
   - **Tag 对象**：补 `slug` / `usedName`；**Memo 对象**：补 `id` / `tags` / `createdAt` / `createdAtISO` / `dateFormat`；
   - **Pagination**：补 `currentPage` / `totalPages` / `totalPosts` / `hasPrev` / `hasNext` / `prevURL` / `nextURL`，并保留 `prev` / `next` 兼容字段；
