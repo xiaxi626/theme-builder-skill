@@ -1,6 +1,6 @@
-# Hexo Pug 主题 → Gridea Pro Pongo2 迁移全流程 Prompt
+# Hexo 主题 → Gridea Pro Pongo2 (Jinja2) 迁移全流程 Prompt
 
-> 本 Prompt 基于 gridea-theme-builder Skill（`theme-builder-skill` 仓库）的完整能力设计，覆盖从逆向分析、变量映射、模板重写、CSS 移植、自动化验证、真机走查到映射积累的全流程。直接将本文档交给 AI 助手即可执行。
+> 本 Prompt 基于 gridea-theme-builder Skill（`theme-builder-skill` 仓库）的完整能力设计，覆盖从逆向分析、变量映射、模板重写、CSS 移植、自动化验证、真机走查到映射积累的全流程。**支持 Pug / Swig / Nunjucks / EJS 四种 Hexo 源模板引擎**，目标统一为 Gridea Pro Pongo2 (Jinja2)。直接将本文档交给 AI 助手即可执行。
 
 > **命名约定：** 仓库目录名为 `theme-builder-skill/`，Skill 注册名为 `gridea-theme-builder`（见 `SKILL.md` 前置元数据）。本文档中所有路径均相对于仓库根目录 `theme-builder-skill/`。
 
@@ -12,13 +12,13 @@
 
 **第二步**：根据需要选择以下两种模式之一：
 
-**完整迁移模式**（从零开始迁移一个 Hexo Pug 主题）：
+**完整迁移模式**（从零开始迁移一个 Hexo 主题，AI 会自动检测源模板引擎）：
 
 ```
 加载 gridea-theme-builder skill。
 
 请严格按照 theme-builder-skill/hexo-pug-to-gridea-migration-prompt.md 中的流程，
-将 Hexo Pug 主题 {HEXO_THEME_PATH} 迁移为 Gridea Pro Pongo2 主题，目标主题名 {THEME_NAME}。
+将 Hexo 主题 {HEXO_THEME_PATH} 迁移为 Gridea Pro Pongo2 主题，目标主题名 {THEME_NAME}。
 ```
 
 **仅积累映射模式**（对已有迁移主题进行事后交叉比对，不执行迁移）：
@@ -29,7 +29,7 @@
 请严格按照 theme-builder-skill/hexo-pug-to-gridea-migration-prompt.md 中阶段七的流程，
 对以下源主题和迁移后的主题执行交叉比对，将映射结果追加到 references/hexo-to-gridea-mappings.md。
 
-源 Hexo Pug 主题：{HEXO_THEME_PATH}
+源 Hexo 主题：{HEXO_THEME_PATH}
 迁移后的 Gridea Pongo2 主题：{GRIDEA_THEME_PATH}
 来源名称：{theme-name}
 ```
@@ -49,18 +49,31 @@
 5. 阅读 `references/theme-config-schema.md`（config.json 规范、5 种 GUI 控件类型）
 6. 阅读 `references/css-patterns.md`（CSS 变量体系、暗色模式、Markdown 样式）
 7. 阅读 `references/quality-checklist.md`（P0/P1/P2 检查清单）
-8. **如果存在** `references/hexo-to-gridea-mappings.md`，阅读该文件作为**先验映射知识**（历史迁移中积累的变量对应关系）
+8. **如果存在** `references/hexo-to-gridea-mappings.md`，阅读该文件作为**先验映射知识**（历史迁移中积累的变量对应关系，来源引擎不限）
 
 ---
 
 ## 阶段一：逆向分析源主题（理解而非翻译）
 
+### 1.0 源引擎自动检测（优先于 1.1 执行）
+
+在扫描目录结构之前，先通过文件扩展名自动识别源主题的模板引擎：
+
+| 文件扩展名 | 源引擎 | 典型目录 | 本项目缩写 |
+|-----------|--------|---------|-----------|
+| `.pug` | Pug | `layout/` | `pug` |
+| `.swig` | Swig | `layout/` | `swig` |
+| `.njk` | Nunjucks | `layout/` | `njk` |
+| `.ejs` | EJS | `layout/` | `ejs` |
+
+检测后输出：`检测到源引擎：{引擎名}（扩展名：{ext}）`。后续所有阶段一和阶段三的源语法引用均使用此检测结果。
+
 ### 1.1 目录结构扫描
 
-遍历源 Hexo Pug 主题的完整目录结构，输出一份**组件清单**，按以下分类：
+遍历源 Hexo 主题的完整目录结构，输出一份**组件清单**，按以下分类（以 Pug 为例，其他引擎替换扩展名即可）：
 
-| 分类 | 源文件（Pug） | 功能描述 | 对应 Gridea 目标 |
-|------|-------------|----------|-----------------|
+| 分类 | 源文件（示例：Pug） | 功能描述 | 对应 Gridea 目标 |
+|------|-------------------|----------|-----------------|
 | 布局 | `layout/layout.pug` | 全局 HTML 骨架 | `templates/base.html` |
 | 布局 | `layout/post.pug` | 文章页布局 | 并入 `templates/post.html` |
 | 页面 | `index.pug` | 首页 | `templates/index.html` |
@@ -76,17 +89,20 @@
 | 局部 | `_partial/pagination.pug` | 分页 | `templates/partials/pagination.html` |
 | 局部 | `_partial/comments.pug` | 评论 | `templates/partials/comments.html` |
 | 局部 | `_partial/scripts.pug` | JS 脚本 | 并入 `templates/base.html` |
-| Mixin | `_mixins/xxx.pug` | 可复用 Pug mixin | 转换为 `include` 组件或 inline 逻辑 |
-| 脚本 | `scripts/` | 主题 JS | 放入 `assets/scripts/` |
+| 组件 | `_mixins/xxx.pug`（Pug）/辅助函数（EJS）/macro（Swig/Nunjucks） | 可复用组件 | 转换为 `include` 组件或 inline 逻辑 |
+| 脚本 | `source/js/` 或 `scripts/` | 主题 JS | 放入 `assets/scripts/` |
 | 样式 | `source/css/` | 主题 CSS/SCSS | 放入 `assets/styles/` |
 | 图片 | `source/images/` | 静态图片 | 放入 `assets/media/images/` |
 | 配置 | `_config.yml` | Hexo 主题配置 | 映射为 `config.json` 的 `customConfig` |
 
+> **注意**：源引擎不同会导致组件复用模式的叫法不同（Pug 叫 mixin、EJS 叫 function/include、Swig/Nunjucks 叫 macro）。阶段一分析时保留原始叫法，阶段三重写时统一转换为 Pongo2 的 `include` 模式。
+
 ### 1.2 页面-组件依赖图
 
-对每个页面模板，画出其依赖的组件树：
+对每个页面模板，画出其依赖的组件树（以下以 Pug 为例，不同引擎的 extends/include 语法见阶段三转换表）：
 
 ```
+Pug 示例：
 index.pug
   extends layout.pug
     include _partial/head.pug
@@ -100,12 +116,15 @@ index.pug
 
 ### 1.3 关键逻辑提取
 
-对每个 Pug 模板，提取以下信息并记录：
+对每个源模板文件，提取以下信息并记录：
 
 - **条件分支**：哪些 UI 块有 `if`/`else` 控制？（如侧边栏开关、暗色模式、评论开关、封面图有无）
-- **循环逻辑**：哪些元素通过 `each`/`for` 循环生成？（如文章列表、标签云、导航菜单、归档列表）
+- **循环逻辑**：哪些元素通过循环生成？（如文章列表、标签云、导航菜单、归档列表）。不同引擎语法不同：Pug 用 `each`，Swig/Nunjucks 用 `{% for %}`，EJS 用 `forEach`/`for`
 - **变量使用清单**：列出每个模板中出现的所有 Hexo 变量（`page.xxx`、`config.xxx`、`theme.xxx`、`site.xxx`）和 Helper 函数调用（`url_for()`、`date_xml()`、`truncate()`、`__()` 等），标注出现位置和语义。**这是阶段二推导映射表的输入。**
-- **Pug Mixin 的调用**：每个 mixin 的输入参数和输出 HTML 结构
+- **组件复用模式的调用**：按源引擎类型记录：
+  - **Pug**：每个 `mixin` 的输入参数和输出 HTML 结构
+  - **Swig/Nunjucks**：每个 `macro` 的参数签名和输出，或 `include` 的相对路径
+  - **EJS**：`include()` 调用或辅助函数的签名和输出
 
 ### 1.4 设计语言提取
 
@@ -179,9 +198,13 @@ python scripts/scaffold_theme.py {THEME_NAME} --engine jinja2 --output-dir ./the
 
 ### 3.2 模板重写原则
 
-**核心原则：不是翻译 Pug 语法，而是理解 Pug 渲染出的 HTML 结构，用 Pongo2 重新生成同样的 HTML。**
+**核心原则：不是翻译源模板语法，而是理解源模板渲染出的 HTML 结构，用 Pongo2 重新生成同样的 HTML。**
 
-#### 3.2.1 Pug → Pongo2 语法转换对照
+#### 3.2.1 源语法 → Pongo2 转换对照
+
+根据阶段一 1.0 检测到的源引擎，使用对应的转换表。**目标引擎均为 Pongo2 (Jinja2)。**
+
+##### 表 A：Pug → Pongo2
 
 | Pug 语法 | 等价 Pongo2 写法 |
 |----------|-----------------|
@@ -191,13 +214,68 @@ python scripts/scaffold_theme.py {THEME_NAME} --engine jinja2 --output-dir ./the
 | `if condition` (缩进) | `{% if condition %}...{% endif %}` |
 | `else if condition` | `{% elif condition %}` |
 | `each item in items` | `{% for item in items %}...{% endfor %}` |
-| `+mixinName(arg1, arg2)` | 用 `{% include "partials/xxx.html" %}` 替代（数据通过上下文传，见附录 B） |
+| `+mixinName(arg1, arg2)` | 用 `{% include "partials/xxx.html" %}` 替代（数据通过上下文传，见附录 A） |
 | `= variable`（输出） | `{{ variable }}` 或 `{{ variable|safe }}` |
 | `!= variable`（不转义） | `{{ variable|safe }}` |
 | `// 注释` | `{# 注释 #}` |
 | `case page.type` | `{% if %}{% elif %}` 链 |
 | `a(href=url) Text` | `<a href="{{ url }}">Text</a>` |
 | `div.class#id` | `<div class="class" id="id">` |
+
+##### 表 B：EJS → Pongo2
+
+| EJS 语法 | 等价 Pongo2 写法 |
+|----------|-----------------|
+| `<% code %>` | `{% code %}` |
+| `<%= value %>` | `{{ value }}` |
+| `<%- value %>` | `{{ value|safe }}` |
+| `<% include('partials/x') %>` | `{% include "partials/x.html" %}` |
+| `if (condition) { }` | `{% if condition %}...{% endif %}` |
+| `} else if (condition) {` | `{% elif condition %}` |
+| `arr.forEach(function(item){ ... })` | `{% for item in arr %}...{% endfor %}` |
+| `a && b` / `a \|\| b` | `a and b` / `a or b` |
+| `!condition` | `not condition` |
+| `arr.length` | `arr|length` |
+| `var x = value` | `{% set x = value %}` |
+| `a ? b : c` | `{% if a %}{{ b }}{% else %}{{ c }}{% endif %}` |
+| `typeof x !== 'undefined'` | `{% if x %}` |
+| `<%# 注释 %>` | `{# 注释 #}` |
+
+##### 表 C：Swig → Pongo2
+
+| Swig 语法 | 等价 Pongo2 写法 | 差异说明 |
+|----------|-----------------|---------|
+| `{% extends "layout" %}` | `{% extends "base.html" %}` | 添加 `.html` 后缀 |
+| `{% block content %}` | `{% block content %}` | 完全相同 |
+| `{% include "partial" %}` | `{% include "partials/xxx.html" %}` | 路径添加后缀，相对于 `templates/` 根 |
+| `{% for item in items %}` | `{% for item in items %}` | 完全相同 |
+| `{% if condition %}` | `{% if condition %}` | 完全相同 |
+| `{% elseif condition %}` | `{% elif condition %}` | Swig 用 `elseif`，Pongo2 用 `elif` |
+| `{{ value }}` | `{{ value }}` | 完全相同 |
+| `{{ value|safe }}` | `{{ value|safe }}` | 完全相同 |
+| `{% macro name(args) %}` | `{% include "partials/xxx.html" %}` | Pongo2 不支持 macro，改用 include（见附录 A） |
+| `{% set x = value %}` | `{% set x = value %}` | 完全相同 |
+| `{% filter name %}...{% endfilter %}` | 使用 Pongo2 filter 管道：`{{ value|filtername }}` | filter 语法不同 |
+| `{# 注释 #}` | `{# 注释 #}` | 完全相同 |
+
+##### 表 D：Nunjucks → Pongo2
+
+| Nunjucks 语法 | 等价 Pongo2 写法 | 差异说明 |
+|--------------|-----------------|---------|
+| `{% extends "layout" %}` | `{% extends "base.html" %}` | 添加 `.html` 后缀 |
+| `{% block content %}` | `{% block content %}` | 完全相同 |
+| `{% include "partial" %}` | `{% include "partials/xxx.html" %}` | 路径添加后缀，相对于 `templates/` 根 |
+| `{% for item in items %}` | `{% for item in items %}` | 完全相同 |
+| `{% if condition %}` | `{% if condition %}` | 完全相同 |
+| `{% elif condition %}` | `{% elif condition %}` | 完全相同 |
+| `{{ value }}` | `{{ value }}` | 完全相同 |
+| `{{ value\|safe }}` | `{{ value\|safe }}` | 完全相同 |
+| `{% macro name(args) %}` | `{% include "partials/xxx.html" %}` | Pongo2 不支持 macro，改用 include（见附录 A） |
+| `{% set x = value %}` | `{% set x = value %}` | 完全相同 |
+| `a and b` / `a or b` / `not a` | `a and b` / `a or b` / `not a` | 完全相同 |
+| `{# 注释 #}` | `{# 注释 #}` | 完全相同 |
+
+> **Swig/Nunjucks 主题的迁移成本远低于 Pug 和 EJS。** 这两种引擎与 Pongo2 共享 90% 的语法，主要差异仅在于文件后缀、路径约定和 macro 转 include。
 
 #### 3.2.2 Pongo2 致命规则（每次写模板前回顾）
 
@@ -256,7 +334,7 @@ python scripts/validate_syntax.py ./themes/{THEME_NAME}
 
 ### 4.1 不直接复制源 CSS
 
-源主题的 CSS 可能包含 Hexo 特有类名、Pug 生成的特定选择器、以及硬编码的色值。移植策略：
+源主题的 CSS 可能包含 Hexo 特有类名、源模板引擎生成的特定选择器、以及硬编码的色值。移植策略：
 
 1. **保留 GTBS 脚手架的 CSS 变量体系**（`:root` 中的 `--color-*` 变量）
 2. **将源主题的色板映射到 CSS 变量**：把源主题的色值填入 `:root` 对应变量
@@ -419,7 +497,7 @@ cp -r ~/Documents/Gridea\ Pro/themes/{THEME_NAME} ~/Documents/Gridea\ Pro/themes
 请严格按照 theme-builder-skill/hexo-pug-to-gridea-migration-prompt.md 中阶段七的流程，
 对以下源主题和迁移后的主题执行交叉比对，将映射结果追加到 references/hexo-to-gridea-mappings.md。
 
-源 Hexo Pug 主题：{HEXO_THEME_PATH}
+源 Hexo 主题：{HEXO_THEME_PATH}
 迁移后的 Gridea Pongo2 主题：{GRIDEA_THEME_PATH}
 来源名称：{theme-name}（用于映射文件中的来源标记）
 
@@ -499,7 +577,7 @@ render_test.py：PASS / WARN(N项) / FAIL(N项)
 
 AI 对**未被排除的**文件，逐一执行以下比对：
 
-1. 从源 Hexo 主题中提取该文件对应的 Pug 模板，列出其中使用的所有变量和 Helper
+1. 从源 Hexo 主题中提取该文件对应的源模板，列出其中使用的所有变量和 Helper
 2. 从迁移后的 Gridea 主题中提取对应的 Pongo2 模板，列出其中使用的所有变量和 Filter
 3. 逐对匹配，确认本次迁移中实际生效的映射关系
 4. 特别注意标注以下类型：
@@ -516,7 +594,7 @@ AI 对**未被排除的**文件，逐一执行以下比对：
 ```markdown
 # Hexo → Gridea Pro 变量映射积累
 
-> 本文件由每次成功迁移后自动生成（阶段七），累积所有已确认的跨系统变量映射关系。
+> 本文件由阶段七交叉比对生成（需用户确认排除范围），累积所有已确认的跨系统变量映射关系。
 > 后续迁移时，阶段二优先查阅本文件作为先验知识；如有冲突，以 `template-variables.md` 为准。
 
 ---
@@ -642,9 +720,13 @@ L2 来源的标记格式：`## 来源：{theme-name}（迁移日期：{YYYY-MM-D
 
 ---
 
-## 附录 A：Pug Mixin → Gridea 转换策略
+## 附录 A：源主题组件模式 → Pongo2 转换策略
 
-Pug 的 `mixin` 是带参数的函数式组件，Pongo2 不支持 `macro`。转换策略：
+不同源引擎的组件复用机制各不相同，但目标统一为 Pongo2 的 `{% include %}` 模式（Pongo2 不支持 `macro`）。
+
+### A.1 Pug Mixin → Pongo2
+
+Pug 的 `mixin` 是带参数的函数式组件。转换策略：
 
 **策略 1：转为 `include` 组件 + `set` 变量**
 
@@ -669,14 +751,11 @@ mixin postCard(post, index)
 ```html
 <!-- 调用处 -->
 {% for post in posts %}
-  {% set currentPost = post %}
   {% include "partials/post-card.html" %}
 {% endfor %}
 ```
 
-**策略 2：直接内联**
-
-如果 mixin 逻辑简单（< 5 行），直接内联到调用处，不创建独立文件。
+**策略 2：直接内联** — 如果 mixin 逻辑简单（< 5 行），直接内联到调用处。
 
 **策略 3：用 `if` 条件分支替代 `case`**
 
@@ -685,19 +764,66 @@ mixin postCard(post, index)
 case page.type
   when 'tags'
     include includes/tags.pug
-  when 'categories'
-    include includes/categories.pug
 ```
 
 ```html
 <!-- 目标: 不同页面类型已经是独立模板文件，不需要 case -->
-<!-- 如果需要合并到一个文件，改用 if 链 -->
 {% if page_type == "tags" %}
-  ...
-{% elif page_type == "categories" %}
   ...
 {% endif %}
 ```
+
+### A.2 EJS Function/Include → Pongo2
+
+EJS 的组件复用通过 `include()` 或内联 JS 函数实现。
+
+**策略 1：`<% include('path') %>` → `{% include "path" %}`**
+
+```ejs
+<!-- 源: <% include('_partial/post-card') %> -->
+<!-- 目标: -->
+{% include "partials/post-card.html" %}
+```
+
+**策略 2：内联辅助函数 → `{% include %}`**
+
+```ejs
+<!-- 源: 内联函数在 forEach 中调用 -->
+<% posts.forEach(function(post) { %>
+  <div class="card">
+    <h2><%= post.title %></h2>
+  </div>
+<% }); %>
+```
+
+```html
+<!-- 目标: 抽成独立组件 + for 循环 -->
+{% for post in posts %}
+  {% include "partials/post-card.html" %}
+{% endfor %}
+```
+
+### A.3 Swig / Nunjucks Macro → Pongo2
+
+Swig 和 Nunjucks 的 `macro` 与 Pug mixin 类似，但用 `{% %}` 语法。
+
+```swig
+{# 源: Swig macro #}
+{% macro postCard(post) %}
+  <div class="card">
+    <h2>{{ post.title }}</h2>
+  </div>
+{% endmacro %}
+```
+
+```html
+<!-- 目标: Pongo2 partial + for 循环 -->
+{% for post in posts %}
+  {% include "partials/post-card.html" %}
+{% endfor %}
+```
+
+> **注意**：Swig/Nunjucks 的 macro 被调用的上下文变量（如 `post`）在执行 `{% include %}` 时自动可用，**不需要**像 Pug mixin 那样通过 `{% set %}` 显式传递。这是因为 Swig/Nunjucks macro 内部已经使用 `{{ post.title }}` 访问外部变量，而 Pongo2 的 `include` 同样继承了父级上下文——两者行为一致。
 
 ## 附录 B：发布前最终检查清单
 
